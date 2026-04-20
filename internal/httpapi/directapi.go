@@ -39,6 +39,16 @@ type directCodexRequestOptions struct {
 	ClaudeProtocol  bool
 	AnthropicVer    string
 	TextFormat      *ResponseFormat
+	Images          []DirectImage
+}
+
+// DirectImage represents a single image attached to a multimodal request.
+// URL accepts a public https URL or an RFC 2397 data URL (e.g. "data:image/png;base64,...").
+// Detail maps to the OpenAI Responses `input_image.detail` hint ("auto"/"low"/"high"); empty
+// means leave unset.
+type DirectImage struct {
+	URL    string
+	Detail string
 }
 
 type directAPIHTTPError struct {
@@ -304,6 +314,26 @@ func (s *Server) callDirectCodexResponses(
 		accountID = strings.TrimSpace(account.AccountID)
 	}
 
+	userContent := []map[string]any{
+		{
+			"type": "input_text",
+			"text": strings.TrimSpace(prompt),
+		},
+	}
+	for _, img := range opts.Images {
+		url := strings.TrimSpace(img.URL)
+		if url == "" {
+			continue
+		}
+		part := map[string]any{
+			"type":      "input_image",
+			"image_url": url,
+		}
+		if detail := strings.TrimSpace(img.Detail); detail != "" {
+			part["detail"] = detail
+		}
+		userContent = append(userContent, part)
+	}
 	payload := map[string]any{
 		"model":  strings.TrimSpace(model),
 		"store":  false,
@@ -318,13 +348,8 @@ func (s *Server) callDirectCodexResponses(
 		"include": []string{"reasoning.encrypted_content"},
 		"input": []map[string]any{
 			{
-				"role": "user",
-				"content": []map[string]any{
-					{
-						"type": "input_text",
-						"text": strings.TrimSpace(prompt),
-					},
-				},
+				"role":    "user",
+				"content": userContent,
 			},
 		},
 	}
