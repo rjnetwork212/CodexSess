@@ -36,6 +36,16 @@ type Service struct {
 	cliActiveCachedAt time.Time
 	codingRunMu       sync.Mutex
 	codingRuns        map[string]*codingRunState
+	refreshTokenMu    sync.Map // account.ID -> *sync.Mutex
+}
+
+func (s *Service) refreshMutexFor(accountID string) *sync.Mutex {
+	if v, ok := s.refreshTokenMu.Load(accountID); ok {
+		return v.(*sync.Mutex)
+	}
+	m := &sync.Mutex{}
+	actual, _ := s.refreshTokenMu.LoadOrStore(accountID, m)
+	return actual.(*sync.Mutex)
 }
 
 type codingRunState struct {
@@ -732,6 +742,28 @@ func (s *Service) ensureFreshTokens(ctx context.Context, a store.Account, tk Tok
 	}
 	if strings.TrimSpace(tk.RefreshToken) == "" {
 		return resolvedTokens{}, fmt.Errorf("access token expired and refresh token missing")
+	}
+	mu := s.refreshMutexFor(a.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	if latest, err := s.Store.FindAccountBySelector(ctx, a.ID); err == nil && strings.TrimSpace(latest.ID) != "" {
+		if idEnc, errA := s.Crypto.Decrypt(latest.TokenID); errA == nil {
+			if accEnc, errB := s.Crypto.Decrypt(latest.TokenAccess); errB == nil {
+				if refEnc, errC := s.Crypto.Decrypt(latest.TokenRefresh); errC == nil {
+					latestTk := TokenSet{
+						IDToken:      string(idEnc),
+						AccessToken:  string(accEnc),
+						RefreshToken: string(refEnc),
+						AccountID:    latest.AccountID,
+					}
+					if latestExp, errD := util.AccessTokenExpiry(latestTk.AccessToken); errD == nil && time.Until(latestExp) > 2*time.Minute {
+						return resolvedTokens{account: latest, tokens: latestTk}, nil
+					}
+					a = latest
+					tk = latestTk
+				}
+			}
+		}
 	}
 	newTk, err := refreshAccessToken(ctx, tk.RefreshToken)
 	if err != nil {

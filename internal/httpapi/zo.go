@@ -81,7 +81,7 @@ func (s *Server) handleZoChatCompletions(w http.ResponseWriter, r *http.Request)
 		respondErr(w, 405, "method_not_allowed", "method not allowed")
 		return
 	}
-	if BearerToken(r.Header.Get("Authorization")) != s.currentAPIKey() {
+	if !s.isValidAPIKey(r) {
 		respondErr(w, 401, "unauthorized", "invalid API key")
 		return
 	}
@@ -274,7 +274,7 @@ func (s *Server) handleZoResponses(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, 405, "method_not_allowed", "method not allowed")
 		return
 	}
-	if BearerToken(r.Header.Get("Authorization")) != s.currentAPIKey() {
+	if !s.isValidAPIKey(r) {
 		respondErr(w, 401, "unauthorized", "invalid API key")
 		return
 	}
@@ -575,7 +575,7 @@ func (s *Server) handleZoMessages(w http.ResponseWriter, r *http.Request) {
 		respondClaudeErr(w, 405, "method_not_allowed", "method not allowed", reqID)
 		return
 	}
-	if BearerToken(r.Header.Get("Authorization")) != s.currentAPIKey() {
+	if !s.isValidAPIKey(r) {
 		respondClaudeErr(w, 401, "unauthorized", "invalid API key", reqID)
 		return
 	}

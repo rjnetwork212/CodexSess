@@ -2574,6 +2574,16 @@
           const text = String(evt?.text || '').trim();
           if (!text) return;
           streamingPending = false;
+          if (liveAssistantID) {
+            messages = messages.map((item) =>
+              item?.id === liveAssistantID
+                ? { ...item, content: text, pending: false }
+                : item
+            );
+            liveAssistantID = '';
+            scrollMessagesToBottom();
+            return;
+          }
           const liveID = `live-assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           streamedAssistantIDs = [...streamedAssistantIDs, liveID];
           messages = messages
@@ -2670,14 +2680,15 @@
         ? assistantMessages
         : (assistantMessage ? [assistantMessage] : []);
       if (!hasLiveAssistant && persistedAssistant.length > 0) {
+        const normalizeContent = (s) => String(s || '').replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
         const assistantDedupSet = new Set(
           messages
             .filter((item) => String(item?.role || '').trim().toLowerCase() === 'assistant')
-            .map((item) => String(item?.content || '').trim())
+            .map((item) => normalizeContent(item?.content))
             .filter(Boolean)
         );
         const dedupedPersistedAssistant = persistedAssistant.filter((item) => {
-          const key = String(item?.content || '').trim();
+          const key = normalizeContent(item?.content);
           if (!key) return true;
           if (assistantDedupSet.has(key)) return false;
           assistantDedupSet.add(key);

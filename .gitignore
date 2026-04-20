@@ -8,3 +8,8 @@ build
 dist/
 build/dist/
 codexsess
+codexsess.exe
+codexsess.exe~
+codexsess_windows_amd64.syso
+.claude/
+.playwright-mcp/
