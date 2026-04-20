@@ -6,6 +6,13 @@ The format follows Keep a Changelog and uses semantic version tags (`vMAJOR.MINO
 
 ## [Unreleased]
 
+### Fixed
+- `/chat` web UI no longer renders the assistant reply twice. The Codex exec provider previously emitted a fallback `delta` event even when `item.completed` had already produced an `assistant_message`, causing the frontend to show two identical bubbles for short replies. The fallback is now skipped whenever `assistantMessages` is non-empty (`internal/provider/codexexec.go`).
+- `assistant_message` handler in `web/src/views/CodingView.svelte` now reuses an existing `liveAssistantID` bubble built from `delta` events instead of allocating a second bubble, defense-in-depth against provider event reordering.
+- Persisted-assistant dedup in `/chat` now normalizes CRLF and collapses whitespace before comparing content, preventing trailing-newline false negatives that would insert a duplicate bubble on stream finalize.
+- Per-account `sync.Mutex` + fresh store re-read around `ensureFreshTokens` eliminates the OAuth refresh-token race where two concurrent requests both rotated the same refresh token, bricking accounts with `refresh_token_reused` (`internal/service/accounts.go`).
+- Constant-time API key comparison on `/zo/v1/chat/completions`, `/zo/v1/responses`, and `/zo/v1/messages` handlers, matching the pattern already used for the non-`zo` paths (`internal/httpapi/zo.go`).
+
 ### Added
 - Vision/image input is now forwarded end-to-end on the public chat endpoints. `POST /v1/chat/completions` accepts OpenAI multimodal content (`image_url` parts with either a raw URL string or `{url, detail}` object), `POST /v1/responses` accepts `input_image` parts in the `input` array, and `POST /v1/messages` accepts Anthropic `image` blocks with either `base64` or `url` sources. Images are converted to Responses-API `input_image` parts and attached to the user message forwarded to the direct API. Requests with only images (no text) are accepted. The built-in `/chat` web coding workspace still routes through the Codex CLI, which has no image support — use the HTTP endpoints for vision.
 

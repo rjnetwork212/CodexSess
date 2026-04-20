@@ -320,7 +320,7 @@ func (c *CodexExec) StreamChatWithOptions(ctx context.Context, opts ExecOptions,
 	if strings.TrimSpace(out.Text) == "" && len(out.ToolCalls) == 0 {
 		return ChatResult{}, errors.New("empty response from codex")
 	}
-	if !emittedDelta && strings.TrimSpace(out.Text) != "" {
+	if !emittedDelta && len(assistantMessages) == 0 && strings.TrimSpace(out.Text) != "" {
 		if err := onEvent(ChatEvent{Type: "delta", Text: out.Text}); err != nil {
 			return ChatResult{}, err
 		}
