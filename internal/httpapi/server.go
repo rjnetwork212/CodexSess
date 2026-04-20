@@ -2772,6 +2772,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Tools:      req.Tools,
 		ToolChoice: req.ToolChoice,
 		TextFormat: req.ResponseFormat,
+		Images:     extractChatMessagesImages(req.Messages),
 	}
 	account, tk, err := s.resolveAPIAccountWithTokens(r.Context(), selector)
 	if err != nil {
@@ -3081,11 +3082,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		Tools:      req.Tools,
 		ToolChoice: req.ToolChoice,
 		TextFormat: nil,
+		Images:     extractResponsesInputImages(req.Input),
 	}
 	if req.Text != nil {
 		directOpts.TextFormat = req.Text.Format
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(prompt) == "" && len(directOpts.Images) == 0 {
 		respondErr(w, 400, "bad_request", "input is required")
 		return
 	}
@@ -3626,8 +3628,9 @@ func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 		ToolChoice:      req.ToolChoice,
 		ClaudeProtocol:  true,
 		AnthropicVer:    anthropicVersion,
+		Images:          extractClaudeMessagesImages(budgetedMessages),
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(prompt) == "" && len(directOpts.Images) == 0 {
 		respondClaudeErr(w, 400, "invalid_request_error", "messages are required", reqID)
 		return
 	}
@@ -4207,6 +4210,160 @@ func extractOpenAIContentText(raw any) string {
 		}
 		return ""
 	}
+}
+
+// extractChatMessagesImages walks OpenAI chat-completions style messages and
+// collects any image parts (`{"type": "image_url", "image_url": {"url": ...}}`).
+// Images from all messages are flattened to a single list because the direct
+// API path collapses the message history into one synthetic user message.
+func extractChatMessagesImages(msgs []ChatMessage) []DirectImage {
+	var out []DirectImage
+	for _, m := range msgs {
+		out = append(out, extractContentImages(m.Content)...)
+	}
+	return out
+}
+
+// extractContentImages handles both the chat-completions format
+// (`image_url` part with nested `{"url": ...}`) and the responses-style
+// `input_image` part (with top-level `image_url` string).
+func extractContentImages(raw any) []DirectImage {
+	if raw == nil {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []DirectImage
+	for _, it := range items {
+		obj, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := obj["type"].(string)
+		switch strings.TrimSpace(t) {
+		case "image_url":
+			url, detail := parseImageURLField(obj["image_url"])
+			if url != "" {
+				out = append(out, DirectImage{URL: url, Detail: detail})
+			}
+		case "input_image":
+			url, detail := parseInputImageField(obj)
+			if url != "" {
+				out = append(out, DirectImage{URL: url, Detail: detail})
+			}
+		}
+	}
+	return out
+}
+
+// parseImageURLField extracts url + optional detail from a chat-completions
+// image_url value, which is either a raw string URL or an object
+// `{"url": "...", "detail": "..."}`.
+func parseImageURLField(v any) (url, detail string) {
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t), ""
+	case map[string]any:
+		u, _ := t["url"].(string)
+		d, _ := t["detail"].(string)
+		return strings.TrimSpace(u), strings.TrimSpace(d)
+	}
+	return "", ""
+}
+
+// parseInputImageField handles the Responses-API input_image shape, which
+// may carry either a top-level `image_url` string or a nested object, plus
+// an optional `detail` field alongside.
+func parseInputImageField(obj map[string]any) (url, detail string) {
+	detail, _ = obj["detail"].(string)
+	detail = strings.TrimSpace(detail)
+	switch v := obj["image_url"].(type) {
+	case string:
+		url = strings.TrimSpace(v)
+	case map[string]any:
+		u, _ := v["url"].(string)
+		url = strings.TrimSpace(u)
+		if detail == "" {
+			d, _ := v["detail"].(string)
+			detail = strings.TrimSpace(d)
+		}
+	}
+	return url, detail
+}
+
+// extractResponsesInputImages walks a raw Responses-API `input` payload and
+// returns any image parts. `input` may be a plain string (no images) or an
+// array of message objects with `content` arrays.
+func extractResponsesInputImages(raw json.RawMessage) []DirectImage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(trimmed, &items); err != nil {
+		return nil
+	}
+	var out []DirectImage
+	for _, item := range items {
+		content, ok := item["content"].([]any)
+		if !ok {
+			continue
+		}
+		out = append(out, extractContentImages(content)...)
+	}
+	return out
+}
+
+// extractClaudeMessagesImages walks Anthropic Messages API content blocks
+// and returns any image parts. Claude uses either
+// `{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}`
+// or the newer `{"type": "image", "source": {"type": "url", "url": "..."}}` form.
+func extractClaudeMessagesImages(msgs []ClaudeMessage) []DirectImage {
+	var out []DirectImage
+	for _, m := range msgs {
+		trimmed := bytes.TrimSpace(m.Content)
+		if len(trimmed) == 0 || trimmed[0] != '[' {
+			continue
+		}
+		var items []map[string]any
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			continue
+		}
+		for _, item := range items {
+			t, _ := item["type"].(string)
+			if strings.TrimSpace(t) != "image" {
+				continue
+			}
+			src, ok := item["source"].(map[string]any)
+			if !ok {
+				continue
+			}
+			srcType, _ := src["type"].(string)
+			switch strings.TrimSpace(srcType) {
+			case "base64":
+				data, _ := src["data"].(string)
+				media, _ := src["media_type"].(string)
+				data = strings.TrimSpace(data)
+				media = strings.TrimSpace(media)
+				if data == "" {
+					continue
+				}
+				if media == "" {
+					media = "image/png"
+				}
+				out = append(out, DirectImage{URL: "data:" + media + ";base64," + data})
+			case "url":
+				u, _ := src["url"].(string)
+				u = strings.TrimSpace(u)
+				if u != "" {
+					out = append(out, DirectImage{URL: u})
+				}
+			}
+		}
+	}
+	return out
 }
 
 func promptFromMessagesWithTools(msgs []ChatMessage, tools []ChatToolDef, toolChoice json.RawMessage) string {

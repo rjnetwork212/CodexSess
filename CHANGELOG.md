@@ -6,6 +6,9 @@ The format follows Keep a Changelog and uses semantic version tags (`vMAJOR.MINO
 
 ## [Unreleased]
 
+### Added
+- Vision/image input is now forwarded end-to-end on the public chat endpoints. `POST /v1/chat/completions` accepts OpenAI multimodal content (`image_url` parts with either a raw URL string or `{url, detail}` object), `POST /v1/responses` accepts `input_image` parts in the `input` array, and `POST /v1/messages` accepts Anthropic `image` blocks with either `base64` or `url` sources. Images are converted to Responses-API `input_image` parts and attached to the user message forwarded to the direct API. Requests with only images (no text) are accepted. The built-in `/chat` web coding workspace still routes through the Codex CLI, which has no image support — use the HTTP endpoints for vision.
+
 ### Changed
 - Usage scheduler now respects `usage_scheduler_enabled` and isolates refresh/autoswitch deadlines, so a refresh timeout no longer cascades into `autoswitch cli check failed: context deadline exceeded` in the same tick.
 - Usage scheduler timeout is now configurable via settings keys `usage_scheduler_refresh_timeout_seconds` and `usage_scheduler_switch_timeout_seconds` (with env overrides `CODEXSESS_USAGE_SCHEDULER_REFRESH_TIMEOUT_SECONDS` and `CODEXSESS_USAGE_SCHEDULER_SWITCH_TIMEOUT_SECONDS`).
