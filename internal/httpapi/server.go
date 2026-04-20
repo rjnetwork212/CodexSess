@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1759,7 +1760,7 @@ func (s *Server) validateAuthCookie(raw string) bool {
 		return false
 	}
 	expect := s.cookieSignature(username, expRaw)
-	return sig == expect
+	return subtle.ConstantTimeCompare([]byte(sig), []byte(expect)) == 1
 }
 
 func (s *Server) cookieSignature(username, expRaw string) string {
@@ -2103,8 +2104,21 @@ func (s *Server) handleWebAccounts(w http.ResponseWriter, r *http.Request) {
 	var totalFiltered int
 	var err error
 
-	page, _ := strconv.Atoi(qPage)
-	limit, _ := strconv.Atoi(qLimit)
+	var page, limit int
+	if qPage != "" {
+		page, err = strconv.Atoi(qPage)
+		if err != nil {
+			respondErr(w, 400, "invalid_query", "page must be an integer")
+			return
+		}
+	}
+	if qLimit != "" {
+		limit, err = strconv.Atoi(qLimit)
+		if err != nil {
+			respondErr(w, 400, "invalid_query", "limit must be an integer")
+			return
+		}
+	}
 
 	if qPage != "" || qLimit != "" {
 		accounts, totalFiltered, err = s.svc.ListAccountsPaginated(r.Context(), page, limit, filter)
@@ -5857,10 +5871,20 @@ func (s *Server) currentAPIKey() string {
 
 func (s *Server) isValidAPIKey(r *http.Request) bool {
 	key := s.currentAPIKey()
-	if BearerToken(r.Header.Get("Authorization")) == key {
-		return true
+	if key == "" {
+		return false
 	}
-	return strings.TrimSpace(r.Header.Get("x-api-key")) == key
+	keyBytes := []byte(key)
+	if bearer := BearerToken(r.Header.Get("Authorization")); bearer != "" {
+		if subtle.ConstantTimeCompare([]byte(bearer), keyBytes) == 1 {
+			return true
+		}
+	}
+	header := strings.TrimSpace(r.Header.Get("x-api-key"))
+	if header == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(header), keyBytes) == 1
 }
 
 func (s *Server) setAPIKey(v string) {

@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -402,7 +403,9 @@ func HashPassword(password string) string {
 }
 
 func VerifyPassword(password, encoded string) bool {
-	return strings.EqualFold(HashPassword(password), strings.TrimSpace(encoded))
+	got := strings.ToLower(HashPassword(password))
+	want := strings.ToLower(strings.TrimSpace(encoded))
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func asString(v any) string {
